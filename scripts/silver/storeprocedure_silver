@@ -1,0 +1,83 @@
+create or alter procedure silver.load_silver as
+begin
+    declare @start_time datetime, @end_time datetime, @batch_start_time datetime, @batch_end_time datetime
+    begin try
+        set @batch_start_time = getdate ()
+        truncate table silver.clean_cafe_sales
+        insert into silver.clean_cafe_sales (
+            [Transaction ID],
+            Item,
+            Quantity,
+            [Price Per Unit],
+            [Total Spent],
+            [Payment Method],
+            [Location],
+            [Transaction Date]
+        )
+        SELECT
+            [Transaction ID] ,
+
+            /* ===== ITEM ===== */
+            CASE
+                WHEN [Price Per Unit] = '1.0' AND [Total Spent] = '1.0' THEN 'Cookie'
+                WHEN [Price Per Unit] = '1.5' AND [Total Spent] = '1.5' THEN 'Tea'
+                WHEN [Price Per Unit] = '2.0' AND [Total Spent] = '2.0' THEN 'Coffee'
+                WHEN Item IS NULL OR Item IN ('ERROR', 'UNKNOWN') THEN 'n/a'
+                ELSE Item
+            END AS Item,
+
+            /* ===== QUANTITY ===== */
+            case 
+                when try_cast (Quantity as float) is not null then try_cast (Quantity as int) --ini untuk mengubah nilai ke float
+                when try_cast (Quantity as float) is null and try_cast ([Price Per Unit] as float) is not null and try_cast ([Total Spent] as float) is not null then try_cast (try_cast ([Total Spent] as float) / try_cast ([Price Per Unit] as float)as int)
+                else null
+            end as Quantity,
+            /* ===== PRICE ===== */
+            case
+                when try_cast ([Price Per Unit] as float) is not null then try_cast([Price Per Unit] as float)
+                when try_cast ([Price Per Unit] as float) is null and try_cast(Quantity as float) is not null and try_cast ([Total Spent] as float) is not null then try_cast([Total Spent] as float) / try_cast (Quantity as float) 
+                else null
+            end as [Price Per Unit],
+
+            /* ===== TOTAL ===== */
+            case
+                when try_cast ([Total Spent] as float) is not null then try_cast([Total Spent] as float)
+                when try_cast ([Total Spent] as float) is null and try_cast ([Quantity] as float) is not null and try_cast([Price Per Unit] as float) is not null then try_cast ([Quantity] as float) * try_cast([Price Per Unit] as float)
+                else null
+            end [Total Spent],
+
+            /* ===== PAYMENT METHOD ===== */
+            CASE
+                WHEN [Payment Method] IS NULL
+                     OR [Payment Method] IN ('ERROR','UNKNOWN')
+                THEN 'n/a'
+                ELSE [Payment Method]
+            END AS [Payment Method],
+
+            /* ===== LOCATION ===== */
+            CASE
+                WHEN Location IS NULL
+                     OR Location IN ('ERROR','UNKNOWN')
+                THEN 'n/a'
+                ELSE Location
+            END AS [Location],
+
+            /* ===== TRANSACTION DATE ===== */
+            TRY_CAST([Transaction Date] AS DATE) AS [Transaction Date]
+
+        FROM bronze.dirty_cafe_sales;
+
+        set @end_time = getdate()
+        print 'Load Duration' + cast(datediff(second, @start_time, @end_time) as varchar) + 'seconds'
+
+        set @batch_end_time = getdate()
+        print 'Load Duration' + cast(datediff(second, @batch_start_time, @batch_end_time) as varchar) + 'seconds'
+    end try
+
+    begin catch
+        print 'Error Occured During Loading Silver Layer'
+        print 'Error Message' + error_message()
+        print 'Error Message' + cast(error_number() as varchar)
+        print 'Error Message' + cast(error_state() as varchar)
+    end catch
+end
